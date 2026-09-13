@@ -13,9 +13,9 @@ input_path = Path(r"input data.xlsx")
 output_root = input_path.parent / "estimated results"
 output_root.mkdir(parents=True, exist_ok=True)
 
-sensor_depths = np.array([20, 40, 70, 100, 130, 160], dtype=float) ###
+sensor_depths = np.array([20, 40, 70, 100, 130, 160], dtype=float) #### set as sensor depth: [20, 40, 70, 100, 130, 160] for 1# and [10, 30, 50, 70, 100, 130] for 2#
 
-# 多细度网格与降水入渗系数
+
 dz_list = [0.5, 1, 2, 5, 10]
 P_factors = [
     0.50,
