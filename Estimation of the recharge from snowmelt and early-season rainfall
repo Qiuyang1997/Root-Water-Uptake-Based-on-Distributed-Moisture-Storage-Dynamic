@@ -1,0 +1,122 @@
+import numpy as np
+import pandas as pd
+
+
+def build_grid(dz_cm=1, z_top=0, z_bottom=160):
+    z_edges = np.arange(z_top, z_bottom + 1e-6, dz_cm)
+    if z_edges[-1] < z_bottom:
+        z_edges = np.append(z_edges, z_bottom)
+    dz = np.diff(z_edges)
+    z_mid = (z_edges[:-1] + z_edges[1:]) / 2
+    return z_edges, z_mid, dz
+
+z_edges, z_mid, dz = build_grid(1.0)
+
+
+sensor_depths = np.array([20, 40, 70, 100, 130, 160], dtype=float)
+
+def interpolate_theta_with_error(row, z_mid, theta_rel_sigma):
+    theta_sensor = pd.to_numeric(row[[f"R{i}" for i in range(1, 7)]], errors="coerce").values
+
+    
+    for i in range(6):
+        if np.isnan(theta_sensor[i]) and i > 0:
+            theta_sensor[i] = theta_sensor[i - 1]
+    for i in range(5, -1, -1):
+        if np.isnan(theta_sensor[i]) and i < 5:
+            theta_sensor[i] = theta_sensor[i + 1]
+
+    theta_sensor = np.nan_to_num(theta_sensor, nan=0.0)
+
+  
+    eps = np.random.normal(0.0, theta_rel_sigma, size=theta_sensor.shape)
+    theta_sensor = np.clip(theta_sensor * (1 + eps), 0.0, None)
+    theta_sensor = theta_sensor / 100.0
+
+    
+    layer_bounds = [
+        (0, 20, theta_sensor[0], theta_sensor[0]),
+        (20, 40, theta_sensor[0], theta_sensor[1]),
+        (40, 70, theta_sensor[1], theta_sensor[2]),
+        (70, 100, theta_sensor[2], theta_sensor[3]),
+        (100, 130, theta_sensor[3], theta_sensor[4]),
+        (130, 160, theta_sensor[4], theta_sensor[5])
+    ]
+
+    theta_mid = np.zeros_like(z_mid)
+    for i, z in enumerate(z_mid):
+        for (z1, z2, th1, th2) in layer_bounds:
+            if z1 <= z <= z2:
+                if th1 == th2:
+                    theta_mid[i] = th1
+                else:
+                    theta_mid[i] = th1 + (th2 - th1) * (z - z1) / (z2 - z1)
+                break
+    return theta_mid
+
+
+def compute_storage(theta_mid, dz_cm=1.0):
+    S_layers = theta_mid * dz_cm * 10.0  
+    return S_layers.sum()
+
+
+file_path = r"input data.xlsx"
+df = pd.read_excel(file_path)
+df["date"] = pd.to_datetime(df["date"])
+
+
+# Set the freeze-thaw window date according to the temperature
+freeze_date = pd.to_datetime("2024-11-18") # 2024-11-21 for 2#
+melt_date   = pd.to_datetime("2025-06-03") # 2025-06-15 for 2#
+period_mask = (df["date"] >= pd.to_datetime("2024-11-19")) & (df["date"] <= pd.to_datetime("2025-06-02"))
+
+row_S1 = df[df["date"] == freeze_date].iloc[0]
+row_S2 = df[df["date"] == melt_date].iloc[0]
+
+
+N = 500
+theta_rel_sigma = 0.03
+P_abs_sigma = 0.1
+VT_rel_sigma = 0.10
+
+results = []
+
+
+for k in range(N):
+
+    # S1
+    theta_mid_S1 = interpolate_theta_with_error(row_S1, z_mid, theta_rel_sigma)
+    S1 = compute_storage(theta_mid_S1)
+
+    # S2
+    theta_mid_S2 = interpolate_theta_with_error(row_S2, z_mid, theta_rel_sigma)
+    S2 = compute_storage(theta_mid_S2)
+
+    # Σ(VT + Es - P)
+    total_flux = 0.0
+    for idx, row in df[period_mask].iterrows():
+
+        # P ±0.1 mm
+        P = max(row["P"] + np.random.normal(0, P_abs_sigma), 0)
+
+        # VT ±10%
+        VT = row["VT"] * (1 + np.random.normal(0, VT_rel_sigma))
+
+        Es = row["Es"]
+
+        total_flux += (VT + Es)
+
+    melt_recharge = S2 - S1 + total_flux
+    results.append(melt_recharge)
+
+results = np.array(results)
+
+
+mean_val = np.mean(results)
+lower = np.percentile(results, 5)
+upper = np.percentile(results, 95)
+
+print("Recharge Monte Carlo（500次）结果：")
+print(f"Mean：{mean_val:.2f} mm")
+print(f"5% lower bound：{lower:.2f} mm")
+print(f"95% higher bound：{upper:.2f} mm")
